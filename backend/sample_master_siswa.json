@@ -1,0 +1,10 @@
+{
+  "_comment": "Referensi struktur data. Data nyata diambil langsung dari Google Sheets 'Master_Siswa'. Gunakan ini sebagai contoh isi sheet.",
+  "Master_Siswa": [
+    { "ID_Siswa": "S001", "Nama": "Ahmad Fauzi", "Kelas": "6A" },
+    { "ID_Siswa": "S002", "Nama": "Siti Nurhaliza", "Kelas": "6A" },
+    { "ID_Siswa": "S003", "Nama": "Budi Santoso", "Kelas": "6A" },
+    { "ID_Siswa": "S004", "Nama": "Dewi Lestari", "Kelas": "6A" },
+    { "ID_Siswa": "S005", "Nama": "Eko Prasetyo", "Kelas": "6A" }
+  ]
+}
