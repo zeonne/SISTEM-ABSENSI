@@ -323,3 +323,77 @@ def write_absensi_row(
             ) from exc
 
     return {"action": action, "row": dict(zip(ABSENSI_HEADERS, new_row))}
+
+
+def generate_absensi_for_date(tanggal: str) -> Dict:
+    """Append a default 'Hadir' row for every student missing one on `tanggal`.
+
+    Only missing (ID_Siswa, tanggal) combinations are appended — rows already
+    edited by a teacher are left untouched. Idempotent: safe to run repeatedly
+    (e.g. cron re-fire or server restart) without creating duplicates.
+    """
+    jam_update = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with _SHEETS_LOCK:
+        service, spreadsheet_id = _get_service()
+        master = _rows_to_dicts(_fetch_values(service, spreadsheet_id, MASTER_SISWA_SHEET))
+        absensi_values = _fetch_values(service, spreadsheet_id, ABSENSI_SHEET)
+
+        # Ensure header row exists.
+        if not absensi_values:
+            service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=f"{ABSENSI_SHEET}!A1",
+                valueInputOption="RAW",
+                body={"values": [ABSENSI_HEADERS]},
+            ).execute()
+            absensi_values = [ABSENSI_HEADERS]
+
+        headers = [h.strip() for h in absensi_values[0]]
+        try:
+            idx_id = headers.index("ID_Siswa")
+            idx_tanggal = headers.index("Tanggal")
+        except ValueError as exc:
+            raise SheetsError(
+                f"Header sheet '{ABSENSI_SHEET}' tidak sesuai. Harus memuat kolom: "
+                f"{', '.join(ABSENSI_HEADERS)}.",
+                code="invalid_absensi_headers",
+            ) from exc
+
+        # Students who already have a row for this date.
+        existing_ids = set()
+        for row in absensi_values[1:]:
+            padded = row + [""] * (len(headers) - len(row))
+            if padded[idx_tanggal].strip() == tanggal.strip():
+                existing_ids.add(padded[idx_id].strip())
+
+        new_rows = []
+        for s in master:
+            sid = str(s.get("ID_Siswa", "")).strip()
+            if not sid or sid in existing_ids:
+                continue
+            new_rows.append(
+                [tanggal, sid, s.get("Nama", ""), s.get("Kelas", ""), "Hadir", jam_update, ""]
+            )
+
+        if new_rows:
+            try:
+                service.spreadsheets().values().append(
+                    spreadsheetId=spreadsheet_id,
+                    range=f"{ABSENSI_SHEET}!A1",
+                    valueInputOption="RAW",
+                    insertDataOption="INSERT_ROWS",
+                    body={"values": new_rows},
+                ).execute()
+            except HttpError as exc:
+                raise _translate_http_error(exc) from exc
+            except Exception as exc:  # noqa: BLE001
+                raise SheetsError(
+                    f"Gagal generate absensi: {exc}", code="generate_failed"
+                ) from exc
+
+    return {
+        "tanggal": tanggal,
+        "created": len(new_rows),
+        "skipped": len(master) - len(new_rows),
+        "total_master": len(master),
+    }

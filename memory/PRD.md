@@ -48,6 +48,15 @@ Status kehadiran harian: Hadir (default), Sakit, Ijin, Pulang.
 - Testing agent: backend 100%, frontend 100%
 
 ## Backlog (belum dikerjakan — sesuai permintaan)
-- P1: Generate absensi otomatis terjadwal ke Sheets (saat ini fallback tampilan saja)
-- P1: Filter berdasarkan kelas
-- P2: Rekap/riwayat tanggal sebelumnya
+- P2: Rekap/riwayat tanggal sebelumnya (pemilih tanggal)
+- P2: Dashboard statistik
+- P2: CRUD siswa, login/logout (di luar cakupan saat ini)
+
+### Tahap 4 — Generate Otomatis + Filter (2026-06)
+- `generate_absensi_for_date(tanggal)`: append baris "Hadir" hanya untuk siswa yang BELUM punya baris di tanggal itu (idempoten, tidak menimpa edit guru), atomik dalam satu `_SHEETS_LOCK`
+- `POST /api/generate-absensi` (trigger manual/testing, default hari ini WIB)
+- Cron platform `.emergent/crons.yml`: `generate-absensi` tiap 06:00 Asia/Jakarta → `POST /api/cron/generate-absensi`
+- Webhook cron diamankan Bearer `WEBHOOK_CRON_SECRET` (hmac.compare_digest, ack 2xx + kerja via BackgroundTasks); `.env` tambah `APP_TIMEZONE`, `WEBHOOK_CRON_SECRET`
+- Frontend: fallback "Hadir" palsu DIHAPUS (siswa tanpa baris → badge "Belum"); tombol "Generate Absensi"
+- Filter client-side: dropdown Kelas (unik + Semua), dropdown Status (Semua/Hadir/Sakit/Ijin/Pulang), search nama (case-insensitive, substring) — ketiganya kombinasikan
+- Testing agent: backend 100%, frontend 100%. Diverifikasi: generate idempoten (created=0 saat ulang), edit guru tidak tertimpa, tanpa duplikat, cron 401/401/200

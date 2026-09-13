@@ -1,11 +1,14 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Query, BackgroundTasks, Header, Request
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import hmac
 import logging
 import asyncio
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import List, Optional
 from pydantic import BaseModel
@@ -20,6 +23,14 @@ from sheets_service import SheetsError
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
+
+WEBHOOK_CRON_SECRET = os.environ.get("WEBHOOK_CRON_SECRET")
+LOCAL_TZ = ZoneInfo(os.environ.get("APP_TIMEZONE", "Asia/Jakarta"))
+
+
+def today_local() -> str:
+    """Today's date (YYYY-MM-DD) in the app's local timezone."""
+    return datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
 
 app = FastAPI(title="Sistem Absensi Sekolah API")
 api_router = APIRouter(prefix="/api")
@@ -103,6 +114,51 @@ async def upsert_absensi(payload: AbsensiUpdate):
     except SheetsError as exc:
         logger.error("Gagal menulis Absensi: %s", exc.message)
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message})
+
+
+class GenerateRequest(BaseModel):
+    tanggal: Optional[str] = None
+
+
+@api_router.post("/generate-absensi")
+async def generate_absensi(payload: GenerateRequest = GenerateRequest()):
+    """Manual trigger: append default 'Hadir' rows for students missing them today.
+
+    Used for testing the daily job without waiting for the schedule.
+    """
+    tanggal = (payload.tanggal or today_local()).strip()
+    try:
+        result = await asyncio.to_thread(sheets_service.generate_absensi_for_date, tanggal)
+        return {"ok": True, **result}
+    except SheetsError as exc:
+        logger.error("Gagal generate absensi: %s", exc.message)
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message})
+
+
+def _run_generate_bg(tanggal: str):
+    try:
+        result = sheets_service.generate_absensi_for_date(tanggal)
+        logger.info("Cron generate-absensi %s: %s", tanggal, result)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Cron generate-absensi gagal untuk %s: %s", tanggal, exc)
+
+
+@api_router.post("/cron/generate-absensi")
+async def cron_generate_absensi(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: Optional[str] = Header(None),
+):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if not WEBHOOK_CRON_SECRET:
+        raise HTTPException(status_code=500, detail="WEBHOOK_CRON_SECRET belum dikonfigurasi.")
+    expected = f"Bearer {WEBHOOK_CRON_SECRET}"
+    if not authorization or not hmac.compare_digest(authorization, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    tanggal = today_local()
+    background_tasks.add_task(_run_generate_bg, tanggal)
+    return {"ok": True, "accepted": True, "tanggal": tanggal}
 
 
 app.include_router(api_router)

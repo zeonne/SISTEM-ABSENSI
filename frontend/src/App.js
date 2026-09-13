@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Toaster, toast } from "sonner";
@@ -41,6 +41,10 @@ const Home = () => {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [generating, setGenerating] = useState(false);
+  const [kelasFilter, setKelasFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [search, setSearch] = useState("");
   const today = todayStr();
 
   const loadData = useCallback(async () => {
@@ -64,17 +68,18 @@ const Home = () => {
         absensi.forEach((a) => {
           byId[a.ID_Siswa] = a;
         });
-        // Fallback: siswa tanpa baris absensi hari ini dianggap "Hadir".
+        // Tanpa fallback: status diambil apa adanya dari Sheets.
+        // Siswa tanpa baris hari ini = "belum diabsen" (bukan otomatis "Hadir").
         const merged = master.map((s) => {
           const a = byId[s.ID_Siswa];
           return {
             ID_Siswa: s.ID_Siswa,
             Nama: s.Nama,
             Kelas: s.Kelas,
-            Status: a?.Status || "Hadir",
+            Status: a?.Status || "",
             Jam_Update: a?.Jam_Update || "",
             Keterangan: a?.Keterangan || "",
-            saved: !!a,
+            hasRow: !!a,
             saving: false,
           };
         });
@@ -97,11 +102,29 @@ const Home = () => {
     loadData();
   }, [loadData]);
 
-  const saveRow = async (idx, patch) => {
-    const current = rows[idx];
-    const next = { ...current, ...patch };
+  const generateToday = async () => {
+    setGenerating(true);
+    try {
+      const res = await axios.post(`${API}/generate-absensi`, { tanggal: today });
+      const d = res.data;
+      toast.success(
+        `Generate selesai: ${d.created} baris dibuat, ${d.skipped} sudah ada`
+      );
+      await loadData();
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      toast.error(detail?.message || "Gagal generate absensi");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const saveRow = async (row, patch) => {
+    const next = { ...row, ...patch };
     setRows((prev) =>
-      prev.map((r, i) => (i === idx ? { ...next, saving: true } : r))
+      prev.map((r) =>
+        r.ID_Siswa === row.ID_Siswa ? { ...next, saving: true } : r
+      )
     );
     try {
       const res = await axios.post(`${API}/absensi`, {
@@ -114,12 +137,12 @@ const Home = () => {
       });
       const saved = res.data.row || {};
       setRows((prev) =>
-        prev.map((r, i) =>
-          i === idx
+        prev.map((r) =>
+          r.ID_Siswa === row.ID_Siswa
             ? {
                 ...next,
                 Jam_Update: saved.Jam_Update || next.Jam_Update,
-                saved: true,
+                hasRow: true,
                 saving: false,
               }
             : r
@@ -129,27 +152,45 @@ const Home = () => {
     } catch (e) {
       const detail = e?.response?.data?.detail;
       setRows((prev) =>
-        prev.map((r, i) => (i === idx ? { ...current, saving: false } : r))
+        prev.map((r) =>
+          r.ID_Siswa === row.ID_Siswa ? { ...row, saving: false } : r
+        )
       );
       toast.error(detail?.message || "Gagal menyimpan ke Google Sheets");
     }
   };
 
-  const onStatusChange = (idx, status) => {
+  const onStatusChange = (row, status) => {
+    if (!status) return;
     const patch =
       status === "Hadir" ? { Status: status, Keterangan: "" } : { Status: status };
-    saveRow(idx, patch);
+    saveRow(row, patch);
   };
 
-  const onKeteranganInput = (idx, val) => {
+  const onKeteranganInput = (id, val) => {
     setRows((prev) =>
-      prev.map((r, i) => (i === idx ? { ...r, Keterangan: val } : r))
+      prev.map((r) => (r.ID_Siswa === id ? { ...r, Keterangan: val } : r))
     );
   };
 
-  const onKeteranganBlur = (idx) => {
-    saveRow(idx, { Keterangan: rows[idx].Keterangan });
+  const onKeteranganBlur = (row) => {
+    saveRow(row, { Keterangan: row.Keterangan });
   };
+
+  const kelasList = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.Kelas).filter(Boolean))).sort(),
+    [rows]
+  );
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (kelasFilter !== "all" && r.Kelas !== kelasFilter) return false;
+      if (statusFilter !== "all" && r.Status !== statusFilter) return false;
+      if (q && !(r.Nama || "").toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [rows, kelasFilter, statusFilter, search]);
 
   return (
     <div className="page" data-testid="home-page">
@@ -168,10 +209,72 @@ const Home = () => {
               {prettyDate(today)}
             </p>
           </div>
-          <button className="btn" onClick={loadData} data-testid="refresh-button">
-            Muat Ulang
-          </button>
+          <div className="header-actions">
+            <button
+              className="btn btn-secondary"
+              onClick={generateToday}
+              disabled={generating}
+              data-testid="generate-button"
+            >
+              {generating ? "Memproses…" : "Generate Absensi"}
+            </button>
+            <button
+              className="btn"
+              onClick={loadData}
+              data-testid="refresh-button"
+            >
+              Muat Ulang
+            </button>
+          </div>
         </div>
+
+        {!loading && !error && rows.length > 0 && (
+          <div className="filter-bar" data-testid="filter-bar">
+            <div className="field">
+              <span className="label">Kelas</span>
+              <select
+                className="filter-select"
+                value={kelasFilter}
+                onChange={(e) => setKelasFilter(e.target.value)}
+                data-testid="filter-kelas"
+              >
+                <option value="all">Semua Kelas</option>
+                {kelasList.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <span className="label">Status</span>
+              <select
+                className="filter-select"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                data-testid="filter-status"
+              >
+                <option value="all">Semua Status</option>
+                {STATUS_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field field-grow">
+              <span className="label">Cari Nama</span>
+              <input
+                className="search-input"
+                type="text"
+                placeholder="mis. Budi"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                data-testid="search-nama"
+              />
+            </div>
+          </div>
+        )}
 
         {loading && (
           <p className="muted" data-testid="loading">
@@ -191,7 +294,13 @@ const Home = () => {
           </p>
         )}
 
-        {!loading && !error && rows.length > 0 && (
+        {!loading && !error && rows.length > 0 && filtered.length === 0 && (
+          <p className="muted" data-testid="no-match-message">
+            Tidak ada siswa yang cocok dengan filter.
+          </p>
+        )}
+
+        {!loading && !error && filtered.length > 0 && (
           <table className="table" data-testid="absensi-table">
             <thead>
               <tr>
@@ -203,9 +312,9 @@ const Home = () => {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
+              {filtered.map((r) => (
                 <tr
-                  key={r.ID_Siswa || i}
+                  key={r.ID_Siswa}
                   data-testid={`absensi-row-${r.ID_Siswa}`}
                   className={r.saving ? "saving" : ""}
                 >
@@ -214,18 +323,23 @@ const Home = () => {
                   <td>
                     <div className="status-cell">
                       <span
-                        className={`badge badge-${r.Status.toLowerCase()}`}
+                        className={`badge badge-${(r.Status || "belum").toLowerCase()}`}
                         data-testid={`status-badge-${r.ID_Siswa}`}
                       >
-                        {r.Status}
+                        {r.Status || "Belum"}
                       </span>
                       <select
                         className="status-select"
-                        value={r.Status}
+                        value={r.Status || ""}
                         disabled={r.saving}
-                        onChange={(e) => onStatusChange(i, e.target.value)}
+                        onChange={(e) => onStatusChange(r, e.target.value)}
                         data-testid={`status-select-${r.ID_Siswa}`}
                       >
+                        {!r.Status && (
+                          <option value="" disabled>
+                            Pilih…
+                          </option>
+                        )}
                         {STATUS_OPTIONS.map((s) => (
                           <option key={s} value={s}>
                             {s}
@@ -236,15 +350,15 @@ const Home = () => {
                   </td>
                   <td className="mono">{fmtJam(r.Jam_Update)}</td>
                   <td>
-                    {r.Status !== "Hadir" ? (
+                    {r.Status && r.Status !== "Hadir" ? (
                       <input
                         className="ket-input"
                         type="text"
                         placeholder="Alasan (opsional)"
                         value={r.Keterangan}
                         disabled={r.saving}
-                        onChange={(e) => onKeteranganInput(i, e.target.value)}
-                        onBlur={() => onKeteranganBlur(i)}
+                        onChange={(e) => onKeteranganInput(r.ID_Siswa, e.target.value)}
+                        onBlur={() => onKeteranganBlur(r)}
                         data-testid={`keterangan-input-${r.ID_Siswa}`}
                       />
                     ) : (

@@ -174,6 +174,63 @@ body {
   color: #5925dc;
 }
 
+.badge-belum {
+  background: #f2f4f7;
+  color: #667085;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-secondary {
+  background: #fff;
+  color: #0b3d5c;
+  border: 1px solid #0b3d5c;
+}
+
+.btn-secondary:hover {
+  background: #eef4f8;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 18px;
+  align-items: flex-end;
+}
+
+.filter-bar .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.filter-bar .field-grow {
+  flex: 1;
+  min-width: 200px;
+}
+
+.filter-select,
+.search-input {
+  padding: 8px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font-size: 14px;
+  background: #fff;
+}
+
+.search-input {
+  width: 100%;
+}
+
 .status-select {
   padding: 5px 8px;
   border: 1px solid #d0d5dd;
