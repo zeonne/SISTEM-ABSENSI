@@ -16,6 +16,7 @@ import json
 import logging
 import threading
 import uuid
+import re
 import bcrypt
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,7 +42,7 @@ ABSENSI_SHEET = "Absensi"
 USERS_SHEET = "Users"
 LOG_SHEET = "Log_Aktivitas"
 
-MASTER_SISWA_HEADERS = ["ID_Siswa", "Nama", "Kelas", "Jenis_Kelamin"]
+MASTER_SISWA_HEADERS = ["ID_Siswa", "Nama", "Kelas", "Jenis_Kelamin", "Status_Aktif"]
 USERS_HEADERS = ["ID_User", "Nama", "Username", "Password_Hash", "Role", "Terakhir_Login"]
 LOG_HEADERS = ["Timestamp", "User", "Aksi", "Detail"]
 
@@ -230,9 +231,15 @@ def _read_values(sheet_name: str) -> List[List[str]]:
 # ---------------------------------------------------------------------------
 # READ functions
 # ---------------------------------------------------------------------------
-def read_master_siswa() -> List[Dict[str, str]]:
-    """Read all rows from the 'Master_Siswa' sheet as list of dicts."""
-    return _rows_to_dicts(_read_values(MASTER_SISWA_SHEET))
+def read_master_siswa(include_inactive: bool = False) -> List[Dict[str, str]]:
+    """Read rows from 'Master_Siswa'. By default only Status_Aktif == 'Aktif'."""
+    rows = _rows_to_dicts(_read_values(MASTER_SISWA_SHEET))
+    if include_inactive:
+        return rows
+    return [
+        r for r in rows
+        if (r.get("Status_Aktif", "") or "Aktif").strip().lower() == "aktif"
+    ]
 
 
 def read_absensi(tanggal: Optional[str] = None) -> List[Dict[str, str]]:
@@ -374,8 +381,12 @@ def generate_absensi_for_date(tanggal: str) -> Dict:
             if padded[idx_tanggal].strip() == tanggal.strip():
                 existing_ids.add(padded[idx_id].strip())
 
+        active = [
+            s for s in master
+            if (s.get("Status_Aktif", "") or "Aktif").strip().lower() == "aktif"
+        ]
         new_rows = []
-        for s in master:
+        for s in active:
             sid = str(s.get("ID_Siswa", "")).strip()
             if not sid or sid in existing_ids:
                 continue
@@ -402,8 +413,8 @@ def generate_absensi_for_date(tanggal: str) -> Dict:
     return {
         "tanggal": tanggal,
         "created": len(new_rows),
-        "skipped": len(master) - len(new_rows),
-        "total_master": len(master),
+        "skipped": len(active) - len(new_rows),
+        "total_master": len(active),
     }
 
 
@@ -443,42 +454,57 @@ def _ensure_sheet(service, spreadsheet_id: str, title: str, headers: List[str]) 
         ).execute()
 
 
-def ensure_structure() -> Dict:
-    """Idempotent: ensure Users & Log_Aktivitas tabs exist and Master_Siswa has Jenis_Kelamin.
+def _ensure_master_column(service, spreadsheet_id, master_values, col_name, default_value):
+    """Ensure Master_Siswa has `col_name`; fill existing rows with default. Caller holds lock."""
+    headers = [h.strip() for h in master_values[0]]
+    if col_name in headers:
+        return master_values, False
+    col_letter = chr(ord("A") + len(headers))
+    service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range=f"{MASTER_SISWA_SHEET}!{col_letter}1",
+        valueInputOption="RAW",
+        body={"values": [[col_name]]},
+    ).execute()
+    n = len(master_values) - 1
+    if n > 0 and default_value is not None:
+        if callable(default_value):
+            col_vals = [[default_value(i)] for i in range(n)]
+        else:
+            col_vals = [[default_value] for _ in range(n)]
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=f"{MASTER_SISWA_SHEET}!{col_letter}2",
+            valueInputOption="RAW",
+            body={"values": col_vals},
+        ).execute()
+    return _fetch_values(service, spreadsheet_id, MASTER_SISWA_SHEET), True
 
-    Existing student rows get an example Jenis_Kelamin (split evenly) if the column
-    is newly added. Safe to run on every startup.
+
+def ensure_structure() -> Dict:
+    """Idempotent: ensure Users & Log_Aktivitas tabs and Master_Siswa columns
+    (Jenis_Kelamin, Status_Aktif) exist. Safe to run on every startup.
     """
     with _SHEETS_LOCK:
         service, spreadsheet_id = _get_service()
         _ensure_sheet(service, spreadsheet_id, USERS_SHEET, USERS_HEADERS)
         _ensure_sheet(service, spreadsheet_id, LOG_SHEET, LOG_HEADERS)
 
-        added_gender_col = False
+        added_columns = []
         master_values = _fetch_values(service, spreadsheet_id, MASTER_SISWA_SHEET)
         if master_values:
-            headers = [h.strip() for h in master_values[0]]
-            if "Jenis_Kelamin" not in headers:
-                col_idx = len(headers)  # 0-based -> next empty column
-                col_letter = chr(ord("A") + col_idx)
-                service.spreadsheets().values().update(
-                    spreadsheetId=spreadsheet_id,
-                    range=f"{MASTER_SISWA_SHEET}!{col_letter}1",
-                    valueInputOption="RAW",
-                    body={"values": [["Jenis_Kelamin"]]},
-                ).execute()
-                n = len(master_values) - 1
-                if n > 0:
-                    genders = ["Laki-laki", "Perempuan"]
-                    col_vals = [[genders[i % 2]] for i in range(n)]
-                    service.spreadsheets().values().update(
-                        spreadsheetId=spreadsheet_id,
-                        range=f"{MASTER_SISWA_SHEET}!{col_letter}2",
-                        valueInputOption="RAW",
-                        body={"values": col_vals},
-                    ).execute()
-                added_gender_col = True
-    return {"added_gender_col": added_gender_col}
+            master_values, a1 = _ensure_master_column(
+                service, spreadsheet_id, master_values, "Jenis_Kelamin",
+                lambda i: ["Laki-laki", "Perempuan"][i % 2],
+            )
+            master_values, a2 = _ensure_master_column(
+                service, spreadsheet_id, master_values, "Status_Aktif", "Aktif"
+            )
+            if a1:
+                added_columns.append("Jenis_Kelamin")
+            if a2:
+                added_columns.append("Status_Aktif")
+    return {"added_columns": added_columns}
 
 
 # ---------------------------------------------------------------------------
@@ -581,3 +607,108 @@ def append_log(user: str, aksi: str, detail: str) -> bool:
             body={"values": [[ts, user, aksi, detail]]},
         ).execute()
     return True
+
+
+# ---------------------------------------------------------------------------
+# Master_Siswa CRUD (soft-delete via Status_Aktif)
+# ---------------------------------------------------------------------------
+def _find_master_row(values, headers, id_siswa):
+    idx_id = headers.index("ID_Siswa")
+    for i, row in enumerate(values[1:], start=2):
+        padded = row + [""] * (len(headers) - len(row))
+        if padded[idx_id].strip() == id_siswa.strip():
+            return i, padded
+    return None, None
+
+
+def create_siswa(nama: str, kelas: str, jenis_kelamin: str) -> Dict:
+    """Append a new active student with an auto-generated unique ID_Siswa (S###)."""
+    with _SHEETS_LOCK:
+        service, spreadsheet_id = _get_service()
+        values = _fetch_values(service, spreadsheet_id, MASTER_SISWA_SHEET)
+        if not values:
+            service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=f"{MASTER_SISWA_SHEET}!A1",
+                valueInputOption="RAW",
+                body={"values": [MASTER_SISWA_HEADERS]},
+            ).execute()
+            values = [MASTER_SISWA_HEADERS]
+
+        headers = [h.strip() for h in values[0]]
+        idx_id = headers.index("ID_Siswa")
+        max_n = 0
+        for row in values[1:]:
+            rid = (row[idx_id] if len(row) > idx_id else "").strip()
+            m = re.match(r"^S(\d+)$", rid)
+            if m:
+                max_n = max(max_n, int(m.group(1)))
+        new_id = f"S{max_n + 1:03d}"
+
+        record = {
+            "ID_Siswa": new_id, "Nama": nama, "Kelas": kelas,
+            "Jenis_Kelamin": jenis_kelamin, "Status_Aktif": "Aktif",
+        }
+        new_row = [record.get(h, "") for h in headers]
+        service.spreadsheets().values().append(
+            spreadsheetId=spreadsheet_id,
+            range=f"{MASTER_SISWA_SHEET}!A1",
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body={"values": [new_row]},
+        ).execute()
+    return {"id_siswa": new_id, "row": record}
+
+
+def update_siswa(id_siswa: str, nama: str, kelas: str, jenis_kelamin: str) -> Dict:
+    """Update Nama/Kelas/Jenis_Kelamin of an existing student (preserves other columns)."""
+    with _SHEETS_LOCK:
+        service, spreadsheet_id = _get_service()
+        values = _fetch_values(service, spreadsheet_id, MASTER_SISWA_SHEET)
+        headers = [h.strip() for h in values[0]] if values else MASTER_SISWA_HEADERS
+        row_num, padded = _find_master_row(values, headers, id_siswa)
+        if not row_num:
+            raise SheetsError(f"Siswa {id_siswa} tidak ditemukan.", code="student_not_found")
+
+        existing = {h: padded[i] for i, h in enumerate(headers)}
+        old = {
+            "Nama": existing.get("Nama", ""),
+            "Kelas": existing.get("Kelas", ""),
+            "Jenis_Kelamin": existing.get("Jenis_Kelamin", ""),
+        }
+        updated = dict(existing)
+        updated["Nama"] = nama
+        updated["Kelas"] = kelas
+        updated["Jenis_Kelamin"] = jenis_kelamin
+        new_row = [updated.get(h, "") for h in headers]
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=f"{MASTER_SISWA_SHEET}!A{row_num}",
+            valueInputOption="RAW",
+            body={"values": [new_row]},
+        ).execute()
+    return {"id_siswa": id_siswa, "old": old, "row": updated}
+
+
+def set_siswa_status(id_siswa: str, status_aktif: str) -> Dict:
+    """Soft delete / reactivate: set Status_Aktif for a student."""
+    with _SHEETS_LOCK:
+        service, spreadsheet_id = _get_service()
+        values = _fetch_values(service, spreadsheet_id, MASTER_SISWA_SHEET)
+        headers = [h.strip() for h in values[0]] if values else MASTER_SISWA_HEADERS
+        if "Status_Aktif" not in headers:
+            raise SheetsError("Kolom Status_Aktif belum ada di Master_Siswa.", code="missing_status_column")
+        row_num, padded = _find_master_row(values, headers, id_siswa)
+        if not row_num:
+            raise SheetsError(f"Siswa {id_siswa} tidak ditemukan.", code="student_not_found")
+
+        updated = {h: padded[i] for i, h in enumerate(headers)}
+        updated["Status_Aktif"] = status_aktif
+        new_row = [updated.get(h, "") for h in headers]
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=f"{MASTER_SISWA_SHEET}!A{row_num}",
+            valueInputOption="RAW",
+            body={"values": [new_row]},
+        ).execute()
+    return {"id_siswa": id_siswa, "nama": updated.get("Nama", ""), "status_aktif": status_aktif, "row": updated}

@@ -1,0 +1,29 @@
+{
+  "summary": "Sidebar + Siswa CRUD stage tested end-to-end. Backend: 14/14 pytest siswa tests pass (protection 401 for GET/POST/PUT/status without cookie; default GET /api/siswa returns only Status_Aktif='Aktif'; status=nonaktif returns only inactive; status=all returns everything; POST empty nama/empty kelas/bad gender -> 422; full lifecycle create->list->edit->deactivate->reactivate with sheet writes verified via GET; nonaktif student excluded from generate-absensi; PUT unknown ID -> 404; status with invalid value -> 422). Frontend (Playwright, single browser context with cookie): admin/admin123 login redirects to /home; sidebar visible with nav-absensi/nav-siswa/nav-dashboard/nav-sejarah/nav-logout; disabled navs have nav-link-disabled class; old header logout-button no longer present; nav-siswa navigates to siswa-page showing siswa-table with 5 seeded aktif rows; add-siswa-button opens siswa-form modal; submit-empty shows form-error 'Nama tidak boleh kosong.'; filling nama/kelas/jenis-kelamin creates SID S009 and appears in list; edit changes name and reflects; nonaktif-siswa opens confirm-dialog with 'menonaktifkan' copy; confirm-yes removes from aktif tab and shows in tab-nonaktif; aktifkan-siswa moves back to aktif; deactivating a student then navigating to nav-absensi shows that student is NOT in absensi-table; status-select-S001 change went through; nav-logout returns to /login.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_siswa.py",
+    "/app/test_reports/pytest/siswa_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py logger is still declared after routes that reference it inside exception handlers (carried over from iter1-3). Works because handlers execute lazily, but fragile.",
+    "GET /api/siswa always reads the whole sheet then filters in Python — fine for MVP but O(N) per request; could cache read_master_siswa if the sheet grows.",
+    "status_aktif is normalized via .capitalize() which conveniently accepts 'aktif'/'AKTIF'/'nonaktif'; keep this documented for API consumers.",
+    "Legacy test_absensi.py from iter1 still does not authenticate and will 401 against protected endpoints — recommend either updating it with an auth fixture or archiving it (test_siswa.py + test_auth.py already cover the same surface).",
+    "Toasts appear/disappear quickly; consider longer visible duration or aria-live=polite to help accessibility & automated verification (minor)."
+  ],
+  "updated_files": ["/app/backend/tests/test_siswa.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin / admin123 (unchanged; bcrypt hash in Users sheet).",
+  "seed_data_creation": "Created student S009 (TESTUI_<suffix>) via UI, edited, deactivated, reactivated, then deactivated again for cleanup. Left in Nonaktif state so it will not pollute the Absensi page. Prior test student S006 'Testa Putriani' remains Nonaktif. Backend lifecycle test also creates one throwaway student per run and leaves it Nonaktif.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Auth cookie 'access_token' (httpOnly, secure, samesite=lax) — requests.Session() persists it, and the frontend shares origin so browser sends it automatically. Sheets writes take ~0.3-0.7s; wait ~1s after add/edit/deactivate for list re-read. Test students should be prefixed TEST/TESTUI and left Nonaktif to avoid clutter on Aktif tab & Absensi page. Native <select> for Jenis Kelamin/Status — use page.select_option. Toast selector is class-based ('.toast') and dismisses quickly; verify by re-reading list state instead of relying on toast text.",
+  "rca of the issue": "No bugs found. All 9 requested scenarios verified green on both backend and frontend."
+}

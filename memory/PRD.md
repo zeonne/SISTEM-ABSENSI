@@ -48,7 +48,16 @@ Status kehadiran harian: Hadir (default), Sakit, Ijin, Pulang.
 - Testing agent: backend 100%, frontend 100%
 
 ## Backlog (belum dikerjakan — sesuai permintaan)
-- P2: CRUD siswa, Dashboard statistik, halaman Log Aktivitas, multi-role/permission
+- P2: Halaman Dashboard statistik (placeholder nav sudah ada)
+- P2: Halaman Sejarah Aktivitas (placeholder nav sudah ada)
+
+### Tahap 7 — Navigasi + CRUD Siswa (2026-06)
+- **Sidebar** di semua halaman setelah login: Absensi, Siswa, Dashboard (nonaktif), Sejarah Aktivitas (nonaktif), Logout (di bawah); logout dipindah dari header Absensi
+- Halaman **Siswa** (`/siswa`): daftar siswa aktif (Nama/Kelas/Jenis Kelamin) + search nama & filter kelas; tab Aktif/Nonaktif
+- Tambah siswa: auto ID `S###` unik, log "Tambah Siswa"; Edit: log "Edit Siswa" + detail perubahan; validasi (Nama/Kelas/Jenis Kelamin wajib)
+- **Soft delete**: kolom `Status_Aktif` (Aktif/Nonaktif) di Master_Siswa; "hapus" = set Nonaktif (dialog konfirmasi), riwayat Absensi tetap utuh; log "Nonaktifkan Siswa" / "Aktifkan Siswa"
+- `read_master_siswa`/`GET /api/siswa` default hanya Aktif (`?status=nonaktif|all`); generate absensi & halaman Absensi mengabaikan siswa nonaktif
+- Endpoint baru diproteksi login. Testing agent: backend 100% (14/14), frontend 100%
 
 ### Tahap 6 — Autentikasi (2026-06)
 - Halaman **Login** terpisah (Username/Password); route `/` diproteksi `ProtectedRoute`, `/login` publik

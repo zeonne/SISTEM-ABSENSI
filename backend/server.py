@@ -199,14 +199,118 @@ async def logout(response: Response, current: dict = Depends(get_current_user)):
 
 
 @api_router.get("/siswa")
-async def get_siswa(current: dict = Depends(get_current_user)):
-    """Return all rows from the 'Master_Siswa' sheet."""
+async def get_siswa(status: str = Query("aktif"), current: dict = Depends(get_current_user)):
+    """Return Master_Siswa rows. status=aktif(default)|nonaktif|all."""
+    st = (status or "aktif").strip().lower()
     try:
-        data = await asyncio.to_thread(sheets_service.read_master_siswa)
-        return {"data": data, "count": len(data)}
+        allrows = await asyncio.to_thread(sheets_service.read_master_siswa, True)
     except SheetsError as exc:
         logger.error("Gagal membaca Master_Siswa: %s", exc.message)
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message})
+
+    def is_active(r):
+        return (r.get("Status_Aktif", "") or "Aktif").strip().lower() == "aktif"
+
+    if st in ("nonaktif", "inactive"):
+        data = [r for r in allrows if not is_active(r)]
+    elif st in ("all", "semua"):
+        data = allrows
+    else:
+        data = [r for r in allrows if is_active(r)]
+    return {"data": data, "count": len(data), "status": st}
+
+
+class SiswaCreate(BaseModel):
+    nama: str
+    kelas: str
+    jenis_kelamin: str
+
+
+class SiswaUpdate(BaseModel):
+    nama: str
+    kelas: str
+    jenis_kelamin: str
+
+
+class SiswaStatus(BaseModel):
+    status_aktif: str
+
+
+VALID_GENDER = {"Laki-laki", "Perempuan"}
+
+
+def _validate_siswa(nama: str, kelas: str, jenis_kelamin: str):
+    if not nama or not nama.strip():
+        raise HTTPException(status_code=422, detail={"code": "invalid_nama", "message": "Nama tidak boleh kosong."})
+    if not kelas or not kelas.strip():
+        raise HTTPException(status_code=422, detail={"code": "invalid_kelas", "message": "Kelas harus dipilih."})
+    if jenis_kelamin not in VALID_GENDER:
+        raise HTTPException(status_code=422, detail={"code": "invalid_gender", "message": "Jenis Kelamin harus dipilih (Laki-laki/Perempuan)."})
+
+
+@api_router.post("/siswa")
+async def create_siswa(payload: SiswaCreate, current: dict = Depends(get_current_user)):
+    _validate_siswa(payload.nama, payload.kelas, payload.jenis_kelamin)
+    try:
+        result = await asyncio.to_thread(
+            sheets_service.create_siswa, payload.nama.strip(), payload.kelas.strip(), payload.jenis_kelamin
+        )
+    except SheetsError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message})
+    try:
+        await asyncio.to_thread(
+            sheets_service.append_log, current["username"], "Tambah Siswa",
+            f"{payload.nama.strip()} ({payload.kelas.strip()}, {payload.jenis_kelamin}) [{result['id_siswa']}]",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Gagal log Tambah Siswa: %s", exc)
+    return {"ok": True, **result}
+
+
+@api_router.put("/siswa/{id_siswa}")
+async def update_siswa(id_siswa: str, payload: SiswaUpdate, current: dict = Depends(get_current_user)):
+    _validate_siswa(payload.nama, payload.kelas, payload.jenis_kelamin)
+    try:
+        result = await asyncio.to_thread(
+            sheets_service.update_siswa, id_siswa, payload.nama.strip(), payload.kelas.strip(), payload.jenis_kelamin
+        )
+    except SheetsError as exc:
+        code = 404 if exc.code == "student_not_found" else 400
+        raise HTTPException(status_code=code, detail={"code": exc.code, "message": exc.message})
+    old = result.get("old", {})
+    changes = []
+    if old.get("Nama", "") != payload.nama.strip():
+        changes.append(f"Nama: '{old.get('Nama', '')}'→'{payload.nama.strip()}'")
+    if old.get("Kelas", "") != payload.kelas.strip():
+        changes.append(f"Kelas: '{old.get('Kelas', '')}'→'{payload.kelas.strip()}'")
+    if old.get("Jenis_Kelamin", "") != payload.jenis_kelamin:
+        changes.append(f"Jenis_Kelamin: '{old.get('Jenis_Kelamin', '')}'→'{payload.jenis_kelamin}'")
+    detail = f"[{id_siswa}] " + ("; ".join(changes) if changes else "tidak ada perubahan")
+    try:
+        await asyncio.to_thread(sheets_service.append_log, current["username"], "Edit Siswa", detail)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Gagal log Edit Siswa: %s", exc)
+    return {"ok": True, **result}
+
+
+@api_router.post("/siswa/{id_siswa}/status")
+async def set_siswa_status(id_siswa: str, payload: SiswaStatus, current: dict = Depends(get_current_user)):
+    val = (payload.status_aktif or "").strip().capitalize()
+    if val not in ("Aktif", "Nonaktif"):
+        raise HTTPException(status_code=422, detail={"code": "invalid_status_aktif", "message": "status_aktif harus 'Aktif' atau 'Nonaktif'."})
+    try:
+        result = await asyncio.to_thread(sheets_service.set_siswa_status, id_siswa, val)
+    except SheetsError as exc:
+        code = 404 if exc.code == "student_not_found" else 400
+        raise HTTPException(status_code=code, detail={"code": exc.code, "message": exc.message})
+    aksi = "Nonaktifkan Siswa" if val == "Nonaktif" else "Aktifkan Siswa"
+    try:
+        await asyncio.to_thread(
+            sheets_service.append_log, current["username"], aksi, f"{result.get('nama', '')} [{id_siswa}] -> {val}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Gagal log %s: %s", aksi, exc)
+    return {"ok": True, **result}
 
 
 @api_router.get("/absensi")
