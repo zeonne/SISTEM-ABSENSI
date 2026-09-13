@@ -14,6 +14,7 @@ Configuration (via backend/.env):
 import os
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -21,6 +22,12 @@ from typing import List, Dict, Optional
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+
+# googleapiclient's Http object is NOT thread-safe. Since /api routes are
+# offloaded via asyncio.to_thread, concurrent requests can share the same
+# cached Http socket and cause SSL: WRONG_VERSION_NUMBER errors (and even
+# glibc heap corruption). Serialize all Sheets API calls with this lock.
+_SHEETS_LOCK = threading.Lock()
 
 logger = logging.getLogger(__name__)
 
@@ -188,8 +195,8 @@ def _rows_to_dicts(values: List[List[str]]) -> List[Dict[str, str]]:
     return result
 
 
-def _read_values(sheet_name: str) -> List[List[str]]:
-    service, spreadsheet_id = _get_service()
+def _fetch_values(service, spreadsheet_id: str, sheet_name: str) -> List[List[str]]:
+    """Fetch raw values for a sheet. Caller MUST already hold _SHEETS_LOCK."""
     try:
         resp = (
             service.spreadsheets()
@@ -204,6 +211,12 @@ def _read_values(sheet_name: str) -> List[List[str]]:
             f"Koneksi ke Google Sheets gagal: {exc}", code="connection_failed"
         ) from exc
     return resp.get("values", [])
+
+
+def _read_values(sheet_name: str) -> List[List[str]]:
+    with _SHEETS_LOCK:
+        service, spreadsheet_id = _get_service()
+        return _fetch_values(service, spreadsheet_id, sheet_name)
 
 
 # ---------------------------------------------------------------------------
@@ -238,72 +251,75 @@ def write_absensi_row(
     If a matching (ID_Siswa, Tanggal) row exists it is updated in place,
     otherwise a new row is appended. Jam_Update is set to the current UTC time.
     """
-    service, spreadsheet_id = _get_service()
-
     jam_update = datetime.now(timezone.utc).isoformat(timespec="seconds")
     new_row = [tanggal, id_siswa, nama, kelas, status, jam_update, keterangan]
 
-    # Read existing values to locate a matching row.
-    values = _read_values(ABSENSI_SHEET)
+    # Read + write atomically under one lock so concurrent updates to the same
+    # (ID_Siswa, Tanggal) can never create duplicate rows.
+    with _SHEETS_LOCK:
+        service, spreadsheet_id = _get_service()
 
-    # Ensure header row exists.
-    if not values:
+        # Read existing values to locate a matching row.
+        values = _fetch_values(service, spreadsheet_id, ABSENSI_SHEET)
+
+        # Ensure header row exists.
+        if not values:
+            try:
+                service.spreadsheets().values().update(
+                    spreadsheetId=spreadsheet_id,
+                    range=f"{ABSENSI_SHEET}!A1",
+                    valueInputOption="RAW",
+                    body={"values": [ABSENSI_HEADERS]},
+                ).execute()
+            except HttpError as exc:
+                raise _translate_http_error(exc) from exc
+            values = [ABSENSI_HEADERS]
+
+        headers = [h.strip() for h in values[0]]
         try:
-            service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range=f"{ABSENSI_SHEET}!A1",
-                valueInputOption="RAW",
-                body={"values": [ABSENSI_HEADERS]},
-            ).execute()
+            idx_id = headers.index("ID_Siswa")
+            idx_tanggal = headers.index("Tanggal")
+        except ValueError as exc:
+            raise SheetsError(
+                f"Header sheet '{ABSENSI_SHEET}' tidak sesuai. Harus memuat kolom: "
+                f"{', '.join(ABSENSI_HEADERS)}.",
+                code="invalid_absensi_headers",
+            ) from exc
+
+        target_row_number = None  # 1-based sheet row number
+        for i, row in enumerate(values[1:], start=2):
+            padded = row + [""] * (len(headers) - len(row))
+            if (
+                padded[idx_id].strip() == id_siswa.strip()
+                and padded[idx_tanggal].strip() == tanggal.strip()
+            ):
+                target_row_number = i
+                break
+
+        try:
+            if target_row_number:
+                rng = f"{ABSENSI_SHEET}!A{target_row_number}"
+                service.spreadsheets().values().update(
+                    spreadsheetId=spreadsheet_id,
+                    range=rng,
+                    valueInputOption="RAW",
+                    body={"values": [new_row]},
+                ).execute()
+                action = "updated"
+            else:
+                service.spreadsheets().values().append(
+                    spreadsheetId=spreadsheet_id,
+                    range=f"{ABSENSI_SHEET}!A1",
+                    valueInputOption="RAW",
+                    insertDataOption="INSERT_ROWS",
+                    body={"values": [new_row]},
+                ).execute()
+                action = "appended"
         except HttpError as exc:
             raise _translate_http_error(exc) from exc
-        values = [ABSENSI_HEADERS]
-
-    headers = [h.strip() for h in values[0]]
-    try:
-        idx_id = headers.index("ID_Siswa")
-        idx_tanggal = headers.index("Tanggal")
-    except ValueError as exc:
-        raise SheetsError(
-            f"Header sheet '{ABSENSI_SHEET}' tidak sesuai. Harus memuat kolom: "
-            f"{', '.join(ABSENSI_HEADERS)}.",
-            code="invalid_absensi_headers",
-        ) from exc
-
-    target_row_number = None  # 1-based sheet row number
-    for i, row in enumerate(values[1:], start=2):
-        padded = row + [""] * (len(headers) - len(row))
-        if (
-            padded[idx_id].strip() == id_siswa.strip()
-            and padded[idx_tanggal].strip() == tanggal.strip()
-        ):
-            target_row_number = i
-            break
-
-    try:
-        if target_row_number:
-            rng = f"{ABSENSI_SHEET}!A{target_row_number}"
-            service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range=rng,
-                valueInputOption="RAW",
-                body={"values": [new_row]},
-            ).execute()
-            action = "updated"
-        else:
-            service.spreadsheets().values().append(
-                spreadsheetId=spreadsheet_id,
-                range=f"{ABSENSI_SHEET}!A1",
-                valueInputOption="RAW",
-                insertDataOption="INSERT_ROWS",
-                body={"values": [new_row]},
-            ).execute()
-            action = "appended"
-    except HttpError as exc:
-        raise _translate_http_error(exc) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise SheetsError(
-            f"Gagal menulis ke Google Sheets: {exc}", code="write_failed"
-        ) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise SheetsError(
+                f"Gagal menulis ke Google Sheets: {exc}", code="write_failed"
+            ) from exc
 
     return {"action": action, "row": dict(zip(ABSENSI_HEADERS, new_row))}

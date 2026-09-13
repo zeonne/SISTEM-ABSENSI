@@ -36,9 +36,18 @@ Status kehadiran harian: Hadir (default), Sakit, Ijin, Pulang.
 - Frontend menampilkan status koneksi + tabel Master_Siswa (verified: 5 siswa tampil)
 - Seed 5 siswa dummy + header Absensi ke spreadsheet nyata
 
+### Tahap 3 — Fitur Inti Absensi (2026-06)
+- Endpoint `POST /api/absensi` (upsert by ID_Siswa+Tanggal, validasi status 422, error handling)
+- Halaman utama: tabel Absensi Hari Ini (Nama, Kelas, Status, Jam_Update, Keterangan)
+- Fallback frontend: siswa tanpa baris hari ini tampil default "Hadir"
+- Dropdown ubah status (Hadir/Sakit/Ijin/Pulang) → simpan ke Sheets + toast, tanpa reload
+- Keterangan opsional muncul untuk status non-Hadir, ikut tersimpan
+- Badge warna per status (Hadir hijau, Sakit merah, Ijin biru, Pulang ungu)
+- FIX kritikal: `threading.Lock` pada semua panggilan Sheets (httplib2 tidak thread-safe → sebelumnya crash/hang saat request paralel)
+- FIX: read+write atomik dalam satu lock → tidak ada duplikat baris untuk key sama meski request bersamaan (diverifikasi 5 write paralel → 1 baris)
+- Testing agent: backend 100%, frontend 100%
+
 ## Backlog (belum dikerjakan — sesuai permintaan)
-- P0: Fitur ubah status kehadiran (Hadir/Sakit/Ijin/Pulang) via UI → WRITE endpoint
-- P1: Generate absensi otomatis harian (default Hadir untuk semua siswa)
-- P1: Filter per kelas
-- P2: Rekap/laporan, tampilan tabel absensi harian
-- P2: Rotasi/pengamanan key service account untuk produksi
+- P1: Generate absensi otomatis terjadwal ke Sheets (saat ini fallback tampilan saja)
+- P1: Filter berdasarkan kelas
+- P2: Rekap/riwayat tanggal sebelumnya

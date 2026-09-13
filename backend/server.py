@@ -8,6 +8,7 @@ import logging
 import asyncio
 from pathlib import Path
 from typing import List, Optional
+from pydantic import BaseModel
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -57,6 +58,50 @@ async def get_absensi(tanggal: Optional[str] = Query(None, description="Filter t
         return {"data": data, "count": len(data), "tanggal": tanggal}
     except SheetsError as exc:
         logger.error("Gagal membaca Absensi: %s", exc.message)
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message})
+
+
+ALLOWED_STATUS = {"Hadir", "Sakit", "Ijin", "Pulang"}
+
+
+class AbsensiUpdate(BaseModel):
+    id_siswa: str
+    tanggal: str
+    nama: str = ""
+    kelas: str = ""
+    status: str = "Hadir"
+    keterangan: str = ""
+
+
+@api_router.post("/absensi")
+async def upsert_absensi(payload: AbsensiUpdate):
+    """Insert or update one row in 'Absensi' (no duplicate per ID_Siswa + Tanggal)."""
+    if payload.status not in ALLOWED_STATUS:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_status",
+                "message": f"Status harus salah satu dari: {', '.join(sorted(ALLOWED_STATUS))}.",
+            },
+        )
+    if not payload.id_siswa.strip() or not payload.tanggal.strip():
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "missing_field", "message": "id_siswa dan tanggal wajib diisi."},
+        )
+    try:
+        result = await asyncio.to_thread(
+            sheets_service.write_absensi_row,
+            payload.id_siswa,
+            payload.tanggal,
+            payload.nama,
+            payload.kelas,
+            payload.status,
+            payload.keterangan,
+        )
+        return {"ok": True, "action": result["action"], "row": result["row"]}
+    except SheetsError as exc:
+        logger.error("Gagal menulis Absensi: %s", exc.message)
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message})
 
 

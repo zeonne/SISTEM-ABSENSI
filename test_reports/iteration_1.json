@@ -1,0 +1,39 @@
+{
+  "summary": "Tested Sistem Absensi Sekolah (Google Sheets-backed attendance). Backend: 9/9 pytest passed (siswa read, absensi CRUD, upsert idempotency, 422 validation, all 4 statuses). Frontend UI: table loads with all 5 students, status dropdowns save via POST /api/absensi with sonner toast (no page reload), keterangan input appears for non-Hadir and persists after reload, Ijin->Hadir hides keterangan, no duplicate rows for repeated S002 updates (verified via API - single row, latest status Pulang). Colored badges rendered correctly (badge-sakit red, badge-pulang purple, badge-hadir green).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "sheets_service (all /api/siswa,/api/absensi)", "issue": "googleapiclient service was cached across threads without a lock. Concurrent requests (frontend fires GET /api/siswa and GET /api/absensi in parallel via Promise.all, which FastAPI runs on separate threads via asyncio.to_thread) share the same non-thread-safe httplib2.Http socket, causing intermittent 'SSL: WRONG_VERSION_NUMBER' errors on the frontend and occasional 'free(): corrupted unsorted chunks' glibc heap corruption that HANGS the backend process (uvicorn worker becomes unresponsive; only supervisor restart recovers). Reproduced twice during testing. Fixed by adding threading.Lock (_SHEETS_LOCK) around all Sheets API calls in /app/backend/sheets_service.py.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_absensi.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Review and keep the threading.Lock fix applied in /app/backend/sheets_service.py (added _SHEETS_LOCK around _read_values and write_absensi_row). Alternative production-grade fix: build a fresh google-api-client service per request (no caching) or replace httplib2 with a thread-safe transport."
+  ],
+  "critical_code_review_comments": [
+    "sheets_service._SERVICE_CACHE reuses one googleapiclient.discovery.build() service across threads. googleapiclient's underlying httplib2.Http is documented as NOT thread-safe. Must serialize or build per-thread.",
+    "server.py logger is defined AFTER routes that reference it (logger.error is invoked inside route handlers at line 49 etc. while logger is assigned only after app.include_router at line 122). At module-import time this works because handlers run later, but the ordering is fragile — move logging.basicConfig and `logger = logging.getLogger(__name__)` above the router definitions.",
+    "server.py imports MongoDB but never uses it for this feature — dead dependency for now (kept intentionally per code comment, fine).",
+    "Backend has no request timeout on Google Sheets calls; a slow/hung API could make requests hang indefinitely. Consider adding a client-side timeout to googleapiclient (build a Http with timeout).",
+    "Frontend saveRow updates state optimistically but sends the full row on every keterangan blur, even when unchanged — minor extra Sheets writes."
+  ],
+  "updated_files": [
+    "/app/backend/sheets_service.py",
+    "/app/backend/tests/test_absensi.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "N/A (no auth)",
+  "seed_data_creation": "No new seed data. Tests upsert into today's Absensi rows for S001/S002/S003 using existing Master_Siswa records.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend depends on Google Sheets service account. Ran into 'SSL: WRONG_VERSION_NUMBER' and 'free(): corrupted unsorted chunks' from concurrent access; fixed via threading.Lock in sheets_service.py. If backend appears hung (health endpoint doesn't respond), run: sudo supervisorctl restart backend. Frontend /api calls: /api/siswa, /api/absensi?tanggal=YYYY-MM-DD, POST /api/absensi. All UI elements have data-testid; status-select-<ID> is a native <select>, use page.select_option.",
+  "rca of the issue": "RCA — Backend intermittent 502/hang: googleapiclient service instance was cached (_SERVICE_CACHE) and reused from multiple worker threads spawned by FastAPI's asyncio.to_thread. httplib2.Http (underlying HTTP transport) is NOT thread-safe; two threads writing/reading the same SSL socket simultaneously caused (a) OpenSSL 'WRONG_VERSION_NUMBER' errors (parsing a frame from the other thread's response), and (b) memory corruption ('free(): corrupted unsorted chunks') which killed the uvicorn worker. Reproduction: load the home page which fires GET /api/siswa + GET /api/absensi in parallel — first request often OK, subsequent loads flaky, eventual crash. Mitigation applied: added threading.Lock around _read_values() and write_absensi_row() so at most one Sheets API call runs at a time. Longer-term: drop the service cache, or bind one Http per thread (threading.local)."
+}

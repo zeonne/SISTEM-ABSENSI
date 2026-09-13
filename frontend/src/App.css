@@ -132,3 +132,71 @@ body {
   color: #667085;
   background: #f9fafb;
 }
+
+.date-line {
+  margin: 2px 0 0;
+  text-transform: capitalize;
+}
+
+.status-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 58px;
+  text-align: center;
+}
+
+.badge-hadir {
+  background: #e7f6ec;
+  color: #067647;
+}
+
+.badge-sakit {
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.badge-ijin {
+  background: #eff4ff;
+  color: #1849a9;
+}
+
+.badge-pulang {
+  background: #f4f3ff;
+  color: #5925dc;
+}
+
+.status-select {
+  padding: 5px 8px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.ket-input {
+  width: 100%;
+  min-width: 180px;
+  padding: 6px 8px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.ket-input:focus {
+  outline: none;
+  border-color: #0b3d5c;
+}
+
+tr.saving {
+  opacity: 0.55;
+}
