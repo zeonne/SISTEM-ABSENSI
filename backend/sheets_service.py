@@ -15,6 +15,8 @@ import os
 import json
 import logging
 import threading
+import uuid
+import bcrypt
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -36,6 +38,12 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 MASTER_SISWA_SHEET = "Master_Siswa"
 ABSENSI_SHEET = "Absensi"
+USERS_SHEET = "Users"
+LOG_SHEET = "Log_Aktivitas"
+
+MASTER_SISWA_HEADERS = ["ID_Siswa", "Nama", "Kelas", "Jenis_Kelamin"]
+USERS_HEADERS = ["ID_User", "Nama", "Username", "Password_Hash", "Role", "Terakhir_Login"]
+LOG_HEADERS = ["Timestamp", "User", "Aksi", "Detail"]
 
 # Canonical column order for the Absensi sheet.
 ABSENSI_HEADERS = [
@@ -397,3 +405,179 @@ def generate_absensi_for_date(tanggal: str) -> Dict:
         "skipped": len(master) - len(new_rows),
         "total_master": len(master),
     }
+
+
+# ---------------------------------------------------------------------------
+# Password hashing (bcrypt) — never store plaintext passwords
+# ---------------------------------------------------------------------------
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Structure setup: new tabs (Users, Log_Aktivitas) + Master_Siswa column
+# ---------------------------------------------------------------------------
+def _ensure_sheet(service, spreadsheet_id: str, title: str, headers: List[str]) -> None:
+    """Create the tab if missing and ensure its header row. Caller holds the lock."""
+    meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+    titles = [s["properties"]["title"] for s in meta.get("sheets", [])]
+    if title not in titles:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": title}}}]},
+        ).execute()
+    values = _fetch_values(service, spreadsheet_id, title)
+    if not values:
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=f"{title}!A1",
+            valueInputOption="RAW",
+            body={"values": [headers]},
+        ).execute()
+
+
+def ensure_structure() -> Dict:
+    """Idempotent: ensure Users & Log_Aktivitas tabs exist and Master_Siswa has Jenis_Kelamin.
+
+    Existing student rows get an example Jenis_Kelamin (split evenly) if the column
+    is newly added. Safe to run on every startup.
+    """
+    with _SHEETS_LOCK:
+        service, spreadsheet_id = _get_service()
+        _ensure_sheet(service, spreadsheet_id, USERS_SHEET, USERS_HEADERS)
+        _ensure_sheet(service, spreadsheet_id, LOG_SHEET, LOG_HEADERS)
+
+        added_gender_col = False
+        master_values = _fetch_values(service, spreadsheet_id, MASTER_SISWA_SHEET)
+        if master_values:
+            headers = [h.strip() for h in master_values[0]]
+            if "Jenis_Kelamin" not in headers:
+                col_idx = len(headers)  # 0-based -> next empty column
+                col_letter = chr(ord("A") + col_idx)
+                service.spreadsheets().values().update(
+                    spreadsheetId=spreadsheet_id,
+                    range=f"{MASTER_SISWA_SHEET}!{col_letter}1",
+                    valueInputOption="RAW",
+                    body={"values": [["Jenis_Kelamin"]]},
+                ).execute()
+                n = len(master_values) - 1
+                if n > 0:
+                    genders = ["Laki-laki", "Perempuan"]
+                    col_vals = [[genders[i % 2]] for i in range(n)]
+                    service.spreadsheets().values().update(
+                        spreadsheetId=spreadsheet_id,
+                        range=f"{MASTER_SISWA_SHEET}!{col_letter}2",
+                        valueInputOption="RAW",
+                        body={"values": col_vals},
+                    ).execute()
+                added_gender_col = True
+    return {"added_gender_col": added_gender_col}
+
+
+# ---------------------------------------------------------------------------
+# Users sheet: basic READ / WRITE (login endpoints come later)
+# ---------------------------------------------------------------------------
+def read_users() -> List[Dict[str, str]]:
+    """Read all rows from the 'Users' sheet as list of dicts (includes Password_Hash)."""
+    return _rows_to_dicts(_read_values(USERS_SHEET))
+
+
+def write_user(
+    nama: str,
+    username: str,
+    password_hash: str,
+    role: str = "guru",
+    terakhir_login: str = "",
+    id_user: Optional[str] = None,
+) -> Dict:
+    """Insert or update one user row keyed by Username (no duplicate usernames)."""
+    with _SHEETS_LOCK:
+        service, spreadsheet_id = _get_service()
+        values = _fetch_values(service, spreadsheet_id, USERS_SHEET)
+        if not values:
+            service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=f"{USERS_SHEET}!A1",
+                valueInputOption="RAW",
+                body={"values": [USERS_HEADERS]},
+            ).execute()
+            values = [USERS_HEADERS]
+
+        headers = [h.strip() for h in values[0]]
+        idx_username = headers.index("Username")
+        idx_id = headers.index("ID_User")
+
+        target_row = None
+        existing_id = None
+        for i, row in enumerate(values[1:], start=2):
+            padded = row + [""] * (len(headers) - len(row))
+            if padded[idx_username].strip() == username.strip():
+                target_row = i
+                existing_id = padded[idx_id].strip()
+                break
+
+        uid = id_user or existing_id or str(uuid.uuid4())
+        new_row = [uid, nama, username, password_hash, role, terakhir_login]
+
+        if target_row:
+            service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=f"{USERS_SHEET}!A{target_row}",
+                valueInputOption="RAW",
+                body={"values": [new_row]},
+            ).execute()
+            action = "updated"
+        else:
+            service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id,
+                range=f"{USERS_SHEET}!A1",
+                valueInputOption="RAW",
+                insertDataOption="INSERT_ROWS",
+                body={"values": [new_row]},
+            ).execute()
+            action = "appended"
+
+    return {"action": action, "row": dict(zip(USERS_HEADERS, new_row))}
+
+
+def seed_default_admin(username: str, password: str, nama: str = "Administrator", role: str = "admin") -> Dict:
+    """Create the default admin (hashed password) only if that username has none yet."""
+    users = read_users()
+    existing = next((u for u in users if u.get("Username", "").strip() == username), None)
+    if existing and existing.get("Password_Hash", "").strip():
+        return {"created": False}
+    write_user(nama=nama, username=username, password_hash=hash_password(password), role=role)
+    return {"created": True}
+
+
+# ---------------------------------------------------------------------------
+# Activity log
+# ---------------------------------------------------------------------------
+def append_log(user: str, aksi: str, detail: str) -> bool:
+    """Append one row to 'Log_Aktivitas' (Timestamp, User, Aksi, Detail)."""
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with _SHEETS_LOCK:
+        service, spreadsheet_id = _get_service()
+        values = _fetch_values(service, spreadsheet_id, LOG_SHEET)
+        if not values:
+            service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=f"{LOG_SHEET}!A1",
+                valueInputOption="RAW",
+                body={"values": [LOG_HEADERS]},
+            ).execute()
+        service.spreadsheets().values().append(
+            spreadsheetId=spreadsheet_id,
+            range=f"{LOG_SHEET}!A1",
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body={"values": [[ts, user, aksi, detail]]},
+        ).execute()
+    return True

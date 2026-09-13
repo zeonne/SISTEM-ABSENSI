@@ -48,9 +48,18 @@ Status kehadiran harian: Hadir (default), Sakit, Ijin, Pulang.
 - Testing agent: backend 100%, frontend 100%
 
 ## Backlog (belum dikerjakan — sesuai permintaan)
-- P2: Rekap/riwayat tanggal sebelumnya (pemilih tanggal)
-- P2: Dashboard statistik
-- P2: CRUD siswa, login/logout (di luar cakupan saat ini)
+- P1: Endpoint login/logout + JWT (struktur Users sudah siap)
+- P2: CRUD siswa, Dashboard statistik, halaman Log Aktivitas
+
+### Tahap 5 — Persiapan Struktur (2026-06)
+- Master_Siswa: kolom `Jenis_Kelamin` ditambah (dummy Laki-laki/Perempuan bergantian); `GET /api/siswa` ikut mengembalikannya
+- Sheet baru **Users** (ID_User, Nama, Username, Password_Hash, Role, Terakhir_Login) + admin default (`admin`/`admin123`, role admin) — password **bcrypt** ($2b$), seeding idempoten saat startup
+- Sheet baru **Log_Aktivitas** (Timestamp, User, Aksi, Detail) + `append_log()`; dipanggil setiap ubah status absensi (Aksi="Ubah Status Absensi", Detail="Nama → Status")
+- Fungsi READ/WRITE Users (`read_users`, `write_user` upsert by Username), `hash_password`/`verify_password`
+- `ensure_structure()` idempoten membuat tab & kolom saat startup (tidak merusak fitur lama)
+- Frontend: tombol **Ekspor Rekap** (unduh CSV absensi hari itu, mengikuti filter aktif); Jenis_Kelamin ikut di CSV
+- `.env`: `ADMIN_USERNAME`, `ADMIN_PASSWORD`
+- Verifikasi langsung: 4 tab ada, admin bcrypt verify=True, log tertulis, semua idempoten
 
 ### Tahap 4 — Generate Otomatis + Filter (2026-06)
 - `generate_absensi_for_date(tanggal)`: append baris "Hadir" hanya untuk siswa yang BELUM punya baris di tanggal itu (idempoten, tidak menimpa edit guru), atomik dalam satu `_SHEETS_LOCK`

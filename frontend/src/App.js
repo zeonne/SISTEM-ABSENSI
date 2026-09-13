@@ -76,6 +76,7 @@ const Home = () => {
             ID_Siswa: s.ID_Siswa,
             Nama: s.Nama,
             Kelas: s.Kelas,
+            Jenis_Kelamin: s.Jenis_Kelamin || "",
             Status: a?.Status || "",
             Jam_Update: a?.Jam_Update || "",
             Keterangan: a?.Keterangan || "",
@@ -177,6 +178,29 @@ const Home = () => {
     saveRow(row, { Keterangan: row.Keterangan });
   };
 
+  const exportCSV = () => {
+    const header = ["Nama", "Kelas", "Jenis Kelamin", "Status", "Jam Update", "Keterangan"];
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [header.map(esc).join(",")];
+    filtered.forEach((r) => {
+      lines.push(
+        [r.Nama, r.Kelas, r.Jenis_Kelamin, r.Status || "Belum", fmtJam(r.Jam_Update), r.Keterangan]
+          .map(esc)
+          .join(",")
+      );
+    });
+    const blob = new Blob(["\ufeff" + lines.join("\n")], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `rekap-absensi-${today}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Rekap absensi diunduh");
+  };
+
   const kelasList = useMemo(
     () => Array.from(new Set(rows.map((r) => r.Kelas).filter(Boolean))).sort(),
     [rows]
@@ -210,6 +234,14 @@ const Home = () => {
             </p>
           </div>
           <div className="header-actions">
+            <button
+              className="btn btn-secondary"
+              onClick={exportCSV}
+              disabled={filtered.length === 0}
+              data-testid="export-button"
+            >
+              Ekspor Rekap
+            </button>
             <button
               className="btn btn-secondary"
               onClick={generateToday}

@@ -110,6 +110,15 @@ async def upsert_absensi(payload: AbsensiUpdate):
             payload.status,
             payload.keterangan,
         )
+        try:
+            await asyncio.to_thread(
+                sheets_service.append_log,
+                "guru",
+                "Ubah Status Absensi",
+                f"{payload.nama or payload.id_siswa} → {payload.status}",
+            )
+        except Exception as log_exc:  # noqa: BLE001
+            logger.warning("Gagal menulis Log_Aktivitas: %s", log_exc)
         return {"ok": True, "action": result["action"], "row": result["row"]}
     except SheetsError as exc:
         logger.error("Gagal menulis Absensi: %s", exc.message)
@@ -176,6 +185,21 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+@app.on_event("startup")
+async def on_startup():
+    """Ensure new sheet structure exists and seed the default admin (idempotent)."""
+    try:
+        await asyncio.to_thread(sheets_service.ensure_structure)
+        await asyncio.to_thread(
+            sheets_service.seed_default_admin,
+            os.environ.get("ADMIN_USERNAME", "admin"),
+            os.environ.get("ADMIN_PASSWORD", "admin123"),
+        )
+        logger.info("Struktur sheet (Users, Log_Aktivitas, Jenis_Kelamin) & admin default siap")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Gagal menyiapkan struktur sheet saat startup: %s", exc)
 
 
 @app.on_event("shutdown")
