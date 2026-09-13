@@ -1,11 +1,140 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, createContext, useContext } from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { Toaster, toast } from "sonner";
 import axios from "axios";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+
+axios.defaults.withCredentials = true;
+
+const AuthContext = createContext(null);
+const useAuth = () => useContext(AuthContext);
+
+const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(undefined); // undefined=checking, null=guest, object=logged in
+
+  useEffect(() => {
+    const id = axios.interceptors.response.use(
+      (r) => r,
+      (error) => {
+        if (error?.response?.status === 401) setUser(null);
+        return Promise.reject(error);
+      }
+    );
+    return () => axios.interceptors.response.eject(id);
+  }, []);
+
+  useEffect(() => {
+    axios
+      .get(`${API}/me`)
+      .then((res) => setUser(res.data.user))
+      .catch(() => setUser(null));
+  }, []);
+
+  const logout = async () => {
+    try {
+      await axios.post(`${API}/logout`);
+    } catch (e) {
+      /* ignore */
+    }
+    setUser(null);
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, setUser, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+const Login = () => {
+  const { user, setUser } = useAuth();
+  const navigate = useNavigate();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (user) navigate("/", { replace: true });
+  }, [user, navigate]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setErr("");
+    try {
+      const res = await axios.post(`${API}/login`, { username, password });
+      setUser(res.data.user);
+      toast.success(`Selamat datang, ${res.data.user.nama || res.data.user.username}`);
+      navigate("/", { replace: true });
+    } catch (e2) {
+      const d = e2?.response?.data?.detail;
+      const msg = typeof d === "string" ? d : d?.message || "Gagal login. Coba lagi.";
+      setErr(msg);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="login-wrap">
+      <form className="login-card" onSubmit={submit} data-testid="login-form">
+        <h1 className="login-title">Sistem Absensi Sekolah</h1>
+        <p className="login-sub">Masuk untuk melanjutkan</p>
+
+        <label className="field-label">Username</label>
+        <input
+          className="login-input"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          data-testid="login-username"
+          autoFocus
+        />
+
+        <label className="field-label">Password</label>
+        <input
+          className="login-input"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          data-testid="login-password"
+        />
+
+        {err && (
+          <div className="alert" data-testid="login-error">
+            {err}
+          </div>
+        )}
+
+        <button
+          className="btn login-btn"
+          type="submit"
+          disabled={submitting}
+          data-testid="login-submit"
+        >
+          {submitting ? "Memproses…" : "Masuk"}
+        </button>
+      </form>
+    </div>
+  );
+};
+
+const ProtectedRoute = ({ children }) => {
+  const { user } = useAuth();
+  if (user === undefined)
+    return (
+      <div className="page">
+        <p className="muted" data-testid="auth-checking">
+          Memuat…
+        </p>
+      </div>
+    );
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
+};
 
 const STATUS_OPTIONS = ["Hadir", "Sakit", "Ijin", "Pulang"];
 
@@ -37,6 +166,13 @@ const prettyDate = (d) => {
 };
 
 const Home = () => {
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+  const handleLogout = async () => {
+    await logout();
+    toast.success("Berhasil logout");
+    navigate("/login", { replace: true });
+  };
   const [config, setConfig] = useState(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -257,6 +393,13 @@ const Home = () => {
             >
               Muat Ulang
             </button>
+            <button
+              className="btn btn-danger"
+              onClick={handleLogout}
+              data-testid="logout-button"
+            >
+              Logout
+            </button>
           </div>
         </div>
 
@@ -421,9 +564,19 @@ function App() {
     <div className="App">
       <Toaster position="top-right" richColors />
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />} />
-        </Routes>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <Home />
+                </ProtectedRoute>
+              }
+            />
+          </Routes>
+        </AuthProvider>
       </BrowserRouter>
     </div>
   );

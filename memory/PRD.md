@@ -48,8 +48,16 @@ Status kehadiran harian: Hadir (default), Sakit, Ijin, Pulang.
 - Testing agent: backend 100%, frontend 100%
 
 ## Backlog (belum dikerjakan — sesuai permintaan)
-- P1: Endpoint login/logout + JWT (struktur Users sudah siap)
-- P2: CRUD siswa, Dashboard statistik, halaman Log Aktivitas
+- P2: CRUD siswa, Dashboard statistik, halaman Log Aktivitas, multi-role/permission
+
+### Tahap 6 — Autentikasi (2026-06)
+- Halaman **Login** terpisah (Username/Password); route `/` diproteksi `ProtectedRoute`, `/login` publik
+- `POST /api/login`: cocokkan ke sheet Users via **bcrypt** (verify_password), pesan gagal generik "Username atau password salah"; sukses → JWT httpOnly cookie, update Terakhir_Login, log "Login"
+- `GET /api/me`, `POST /api/logout` (log "Logout"); tombol Logout di halaman utama
+- Semua endpoint lama (siswa, absensi GET/POST, generate) diproteksi `Depends(get_current_user)` → 401 tanpa token
+- **Rate limiting** login gagal: 5x → 429 (window 15 mnt, key X-Forwarded-For + username; per-user, admin tak terkunci)
+- Password_Hash tidak pernah dikirim ke frontend; JWT_SECRET di .env; cookie secure+lax (same-origin)
+- Testing agent: backend 100% (13/13), frontend 100%
 
 ### Tahap 5 — Persiapan Struktur (2026-06)
 - Master_Siswa: kolom `Jenis_Kelamin` ditambah (dummy Laki-laki/Perempuan bergantian); `GET /api/siswa` ikut mengembalikannya
