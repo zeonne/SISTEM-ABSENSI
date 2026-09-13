@@ -48,8 +48,15 @@ Status kehadiran harian: Hadir (default), Sakit, Ijin, Pulang.
 - Testing agent: backend 100%, frontend 100%
 
 ## Backlog (belum dikerjakan — sesuai permintaan)
-- P2: Halaman Dashboard statistik (placeholder nav sudah ada)
 - P2: Halaman Sejarah Aktivitas (placeholder nav sudah ada)
+
+### Tahap 8 — Dashboard (2026-06)
+- Urutan sidebar: **Dashboard, Absensi, Siswa, Sejarah Aktivitas** (placeholder); Logout tetap di bawah
+- **Dashboard** jadi halaman default setelah login (`/` → `/dashboard`), read-only
+- `GET /api/dashboard` (agregasi ringan di backend, hanya siswa Aktif): kartu Hadir/Sakit/Ijin/Pulang hari ini, jumlah siswa per jenis kelamin, dan daftar siswa Sakit/Ijin/Pulang
+- Search nama + filter jenis kelamin (bisa digabung) pada tabel perhatian
+- Dashboard memakai tanggal default backend (Asia/Jakarta) agar tidak drift dengan timezone browser
+- Testing agent: backend 100% (8/8), frontend 100% (fix minor timezone diterapkan)
 
 ### Tahap 7 — Navigasi + CRUD Siswa (2026-06)
 - **Sidebar** di semua halaman setelah login: Absensi, Siswa, Dashboard (nonaktif), Sejarah Aktivitas (nonaktif), Logout (di bawah); logout dipindah dari header Absensi

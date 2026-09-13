@@ -428,6 +428,56 @@ async def cron_generate_absensi(
     return {"ok": True, "accepted": True, "tanggal": tanggal}
 
 
+@api_router.get("/dashboard")
+async def dashboard(
+    tanggal: Optional[str] = Query(None),
+    current: dict = Depends(get_current_user),
+):
+    """Light read-only aggregation for the Dashboard (active students only)."""
+    t = (tanggal or today_local()).strip()
+    try:
+        active = await asyncio.to_thread(sheets_service.read_master_siswa, False)
+        absensi = await asyncio.to_thread(sheets_service.read_absensi, t)
+    except SheetsError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message})
+
+    by_id = {s.get("ID_Siswa", "").strip(): s for s in active}
+    active_ids = set(by_id.keys())
+
+    kehadiran = {"Hadir": 0, "Sakit": 0, "Ijin": 0, "Pulang": 0}
+    perhatian = []
+    for a in absensi:
+        sid = a.get("ID_Siswa", "").strip()
+        if sid not in active_ids:
+            continue
+        st = a.get("Status", "").strip()
+        if st in kehadiran:
+            kehadiran[st] += 1
+        if st in ("Sakit", "Ijin", "Pulang"):
+            stu = by_id.get(sid, {})
+            perhatian.append({
+                "Nama": a.get("Nama", "") or stu.get("Nama", ""),
+                "Kelas": a.get("Kelas", "") or stu.get("Kelas", ""),
+                "Jenis_Kelamin": stu.get("Jenis_Kelamin", ""),
+                "Status": st,
+                "Keterangan": a.get("Keterangan", ""),
+            })
+
+    gender = {"Laki-laki": 0, "Perempuan": 0}
+    for s in active:
+        g = (s.get("Jenis_Kelamin", "") or "").strip()
+        if g in gender:
+            gender[g] += 1
+
+    return {
+        "tanggal": t,
+        "kehadiran": kehadiran,
+        "gender": gender,
+        "perhatian": perhatian,
+        "total_aktif": len(active),
+    }
+
+
 app.include_router(api_router)
 
 app.add_middleware(

@@ -1,0 +1,31 @@
+{
+  "summary": "Dashboard stage tested end-to-end. Backend: 8/8 pytest dashboard tests pass — GET /api/dashboard is auth-protected (401 without cookie), returns expected shape {tanggal,kehadiran{Hadir,Sakit,Ijin,Pulang},gender{Laki-laki,Perempuan},perhatian[],total_aktif}, respects ?tanggal query, only counts active students, perhatian rows have correct columns and only Sakit/Ijin/Pulang statuses, seeded Siti Nurhaliza(Sakit,demam)/Budi Santoso(Ijin)/Dewi Lestari(Pulang) present, gender sum <= total_aktif, kehadiran sum equals active-students-with-a-row-today, total_aktif matches /api/siswa?status=aktif count. Frontend (Playwright, single browser context): admin/admin123 login redirects to /dashboard (NOT /home/absensi); root '/' redirects to /dashboard; sidebar order is exactly nav-dashboard, nav-absensi, nav-siswa, nav-sejarah, nav-logout; nav-dashboard is enabled (class 'nav-link nav-link-active'), nav-sejarah is disabled (class contains 'nav-link-disabled'); 4 stat cards render with numeric values (stat-hadir=3, stat-sakit=1, stat-ijin=1, stat-pulang=0*, stat-laki=4, stat-perempuan=2); perhatian table shows 2 rows (Siti Nurhaliza Sakit/flu, Budi Santoso Ijin/tidurrrrrrrrr)*; typing 'budi' filters to 1 Budi row; selecting Perempuan filter shows only Siti; combining search 'zzz' shows dashboard-perhatian-empty; only 1 <select> on page (gender filter) confirming read-only — no status dropdowns/edit/generate/export controls; nav-absensi navigates to /absensi, nav-siswa to /siswa, nav-sejarah click does NOT navigate; nav-logout returns to /login.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Dashboard tanggal source", "issue": "DashboardPage sends tanggal computed from the browser's LOCAL clock (todayStr()) rather than letting the backend default to Asia/Jakarta. If the browser runs in a different timezone (e.g., UTC test container just before midnight), the dashboard fetches a different date than the backend's local today, so today-seeded rows can be missing. Observed: Dewi Lestari (Pulang) did NOT appear in the perhatian table in the Playwright run because the browser was on 2026-09-13 while backend Jakarta today was 2026-09-14 (Sakit=1, Ijin=1, Pulang=0 in UI vs Pulang=1 verified by backend test). Recommended: omit the tanggal param and let the backend default, or fetch today from the server.", "affected_selectors": ["stat-pulang","dashboard-perhatian-table","dashboard-row-*"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_dashboard.py",
+    "/app/test_reports/pytest/dashboard_results.xml"
+  ],
+  "action_items": [
+    "(Low) DashboardPage should either omit the `tanggal` query param (letting backend use Asia/Jakarta today) or fetch the local date from a backend endpoint. Currently it uses the browser's local date, which can differ from backend's timezone and hide today-seeded rows. Everything else is green."
+  ],
+  "critical_code_review_comments": [
+    "server.py /api/dashboard iterates absensi rows and increments kehadiran per row; if a duplicate (ID_Siswa, Tanggal) row ever slipped through (e.g., a manual sheet edit) it would double-count. Sheets-side write_absensi_row already prevents duplicates, so it's a latent risk only.",
+    "DashboardPage passes tanggal from client clock (App.js:961,969). Backend's default (Asia/Jakarta) is safer and already implemented — pass no tanggal to avoid timezone drift bugs.",
+    "logger is still declared after the routes that reference it inside exception handlers (carried from prior iterations)."
+  ],
+  "updated_files": ["/app/backend/tests/test_dashboard.py"],
+  "success_rate": {"backend": "100%", "frontend": "95% (all requirements met; one minor client-timezone integration issue observed)"},
+  "test_credentials": "admin / admin123 (Google Sheets Users tab, bcrypt).",
+  "seed_data_creation": "None. Reused seeded absensi for today (S002 Sakit/flu, S003 Ijin/tidurrrrrrrrr, S004 Pulang) already present in the sheet.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend dashboard endpoint is stable and matches shape. When testing the frontend from a container whose OS clock is UTC, be aware the DashboardPage sends tanggal=<browser-local-date>, which may not equal the backend Asia/Jakarta 'today'. Assert perhatian names conditionally on the tanggal actually rendered by the UI, or set the Playwright timezone via new_context(timezone_id='Asia/Jakarta'). Auth cookie 'access_token' is httpOnly+secure+samesite=lax; requests.Session persists it. All previous test suites (auth, siswa, absensi, generate/cron) also still available under /app/backend/tests.",
+  "rca of the issue": "Minor timezone drift only: DashboardPage passes a client-side computed date to GET /api/dashboard instead of letting the backend default to Asia/Jakarta today. In a UTC-clock browser run late in the day (Jakarta already tomorrow), the frontend fetches yesterday's dashboard and misses today's Pulang rows. Mitigation: remove the `tanggal` param from the DashboardPage axios call (or derive it from a server-provided value). No backend fix required."
+}
