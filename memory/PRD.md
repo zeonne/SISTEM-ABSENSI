@@ -48,8 +48,18 @@ Status kehadiran harian: Hadir (default), Sakit, Ijin, Pulang.
 - Testing agent: backend 100%, frontend 100%
 
 ## Backlog (belum dikerjakan)
-- P2: UI/UX overhaul (Prompt 10)
-- P2: Refactor App.js → pisah ke pages/components (maintainability)
+- P2: UI/UX overhaul (Prompt 10) — tema warna, tipografi, animasi
+
+### Tahap 10a — Restrukturisasi Frontend + Responsif Dasar + Spinner (2026-06)
+- **App.js dipecah** dari monolit ~1462 baris menjadi modular:
+  - `context/AuthContext.js` (AuthProvider + useAuth)
+  - `components/{Sidebar,Layout,ProtectedRoute,Pagination,Spinner}.js`
+  - `pages/{Login,DashboardPage,AbsensiPage,SiswaPage,SejarahPage}.js`
+  - `lib/{api,format}.js`; `App.js` kini hanya router (~60 baris)
+- **Responsif dasar HP**: sidebar jadi drawer + tombol hamburger (`mobile-menu-btn`) & backdrop (`sidebar-backdrop`); tabel `table-scroll` (scroll horizontal); filter-bar & card-header menumpuk di layar kecil
+- **Loading spinner** CSS sederhana di tiap halaman (`Spinner`) menggantikan teks "Memuat data…"
+- TIDAK ada perubahan logic/endpoint/penyimpanan data; tema warna belum diubah (menunggu Prompt 10)
+- Testing agent iterasi 7: frontend 100% (8/8 flow), tanpa regresi
 
 ### Tahap 9 — Sejarah Aktivitas + Pagination + Filter Kelas Dashboard + Konfirmasi Logout (2026-06)
 - Halaman **Sejarah Aktivitas** (`/sejarah`, nav aktif): tabel Log_Aktivitas (Waktu/User/Aksi/Detail) urut terbaru; filter Aksi + rentang tanggal + pagination
