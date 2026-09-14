@@ -529,6 +529,32 @@ body {
   }
 }
 
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.page-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.page-info {
+  font-size: 13px;
+  color: #667085;
+}
+
 .status-select {
   padding: 5px 8px;
   border: 1px solid #d0d5dd;

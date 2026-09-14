@@ -428,9 +428,20 @@ async def cron_generate_absensi(
     return {"ok": True, "accepted": True, "tanggal": tanggal}
 
 
+@api_router.get("/logs")
+async def get_logs(current: dict = Depends(get_current_user)):
+    """Return all rows from the 'Log_Aktivitas' sheet (frontend sorts/filters/paginates)."""
+    try:
+        data = await asyncio.to_thread(sheets_service.read_logs)
+    except SheetsError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message})
+    return {"data": data, "count": len(data)}
+
+
 @api_router.get("/dashboard")
 async def dashboard(
     tanggal: Optional[str] = Query(None),
+    kelas: Optional[str] = Query(None),
     current: dict = Depends(get_current_user),
 ):
     """Light read-only aggregation for the Dashboard (active students only)."""
@@ -440,6 +451,10 @@ async def dashboard(
         absensi = await asyncio.to_thread(sheets_service.read_absensi, t)
     except SheetsError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message})
+
+    kelas_list = sorted({(s.get("Kelas", "") or "").strip() for s in active if (s.get("Kelas", "") or "").strip()})
+    if kelas and kelas.strip() and kelas.strip().lower() not in ("all", "semua"):
+        active = [s for s in active if (s.get("Kelas", "") or "").strip() == kelas.strip()]
 
     by_id = {s.get("ID_Siswa", "").strip(): s for s in active}
     active_ids = set(by_id.keys())
@@ -475,6 +490,7 @@ async def dashboard(
         "gender": gender,
         "perhatian": perhatian,
         "total_aktif": len(active),
+        "kelas_list": kelas_list,
     }
 
 

@@ -515,6 +515,11 @@ def read_users() -> List[Dict[str, str]]:
     return _rows_to_dicts(_read_values(USERS_SHEET))
 
 
+def read_logs() -> List[Dict[str, str]]:
+    """Read all rows from the 'Log_Aktivitas' sheet as list of dicts."""
+    return _rows_to_dicts(_read_values(LOG_SHEET))
+
+
 def write_user(
     nama: str,
     username: str,

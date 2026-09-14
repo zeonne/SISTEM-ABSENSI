@@ -125,7 +125,9 @@ const Login = () => {
 const Sidebar = () => {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const doLogout = async () => {
+    setConfirmOpen(false);
     await logout();
     toast.success("Berhasil logout");
     navigate("/login", { replace: true });
@@ -133,37 +135,63 @@ const Sidebar = () => {
   const linkClass = ({ isActive }) =>
     "nav-link" + (isActive ? " nav-link-active" : "");
   return (
-    <aside className="sidebar" data-testid="sidebar">
-      <div className="sidebar-brand">
-        <span className="brand-mark">SA</span>
-        <div>
-          <div className="brand-title">Absensi Sekolah</div>
-          <div className="brand-user">{user?.nama || user?.username}</div>
+    <>
+      <aside className="sidebar" data-testid="sidebar">
+        <div className="sidebar-brand">
+          <span className="brand-mark">SA</span>
+          <div>
+            <div className="brand-title">Absensi Sekolah</div>
+            <div className="brand-user">{user?.nama || user?.username}</div>
+          </div>
         </div>
-      </div>
-      <nav className="sidebar-nav">
-        <NavLink to="/dashboard" className={linkClass} data-testid="nav-dashboard">
-          Dashboard
-        </NavLink>
-        <NavLink to="/absensi" className={linkClass} data-testid="nav-absensi">
-          Absensi
-        </NavLink>
-        <NavLink to="/siswa" className={linkClass} data-testid="nav-siswa">
-          Siswa
-        </NavLink>
-        <span
-          className="nav-link nav-link-disabled"
-          data-testid="nav-sejarah"
-          aria-disabled="true"
-          title="Segera hadir"
+        <nav className="sidebar-nav">
+          <NavLink to="/dashboard" className={linkClass} data-testid="nav-dashboard">
+            Dashboard
+          </NavLink>
+          <NavLink to="/absensi" className={linkClass} data-testid="nav-absensi">
+            Absensi
+          </NavLink>
+          <NavLink to="/siswa" className={linkClass} data-testid="nav-siswa">
+            Siswa
+          </NavLink>
+          <NavLink to="/sejarah" className={linkClass} data-testid="nav-sejarah">
+            Sejarah Aktivitas
+          </NavLink>
+        </nav>
+        <button
+          className="nav-logout"
+          onClick={() => setConfirmOpen(true)}
+          data-testid="nav-logout"
         >
-          Sejarah Aktivitas
-        </span>
-      </nav>
-      <button className="nav-logout" onClick={doLogout} data-testid="nav-logout">
-        Logout
-      </button>
-    </aside>
+          Logout
+        </button>
+      </aside>
+
+      {confirmOpen && (
+        <div className="modal-overlay" data-testid="logout-confirm">
+          <div className="modal-card confirm-card">
+            <h2 className="card-title">Konfirmasi Logout</h2>
+            <p className="muted">Apakah kamu yakin ingin keluar?</p>
+            <div className="modal-actions">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setConfirmOpen(false)}
+                data-testid="logout-cancel"
+              >
+                Batal
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={doLogout}
+                data-testid="logout-confirm-yes"
+              >
+                Ya, Keluar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 
@@ -215,6 +243,52 @@ const prettyDate = (d) => {
   } catch {
     return d;
   }
+};
+
+const PAGE_SIZES = [5, 10, 50, 100];
+
+const Pagination = ({ total, page, pageSize, onPage, onSize, testid }) => {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <div className="pagination" data-testid={testid}>
+      <div className="page-size">
+        <span className="label">Baris per halaman</span>
+        <select
+          className="filter-select"
+          value={pageSize}
+          onChange={(e) => onSize(Number(e.target.value))}
+          data-testid={`${testid}-size`}
+        >
+          {PAGE_SIZES.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="page-nav">
+        <button
+          className="btn btn-secondary btn-sm"
+          disabled={page <= 1}
+          onClick={() => onPage(page - 1)}
+          data-testid={`${testid}-prev`}
+        >
+          Sebelumnya
+        </button>
+        <span className="page-info" data-testid={`${testid}-info`}>
+          Hal {page} / {totalPages} ({total} data)
+        </span>
+        <button
+          className="btn btn-secondary btn-sm"
+          disabled={page >= totalPages}
+          onClick={() => onPage(page + 1)}
+          data-testid={`${testid}-next`}
+        >
+          Selanjutnya
+        </button>
+      </div>
+    </div>
+  );
 };
 
 const Home = () => {
@@ -397,6 +471,16 @@ const Home = () => {
     });
   }, [rows, kelasFilter, statusFilter, search]);
 
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  useEffect(() => {
+    setPage(1);
+  }, [search, kelasFilter, statusFilter]);
+  const paged = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize]
+  );
+
   return (
     <div className="page" data-testid="home-page">
       <header className="page-header">
@@ -525,7 +609,7 @@ const Home = () => {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
+              {paged.map((r) => (
                 <tr
                   key={r.ID_Siswa}
                   data-testid={`absensi-row-${r.ID_Siswa}`}
@@ -582,6 +666,19 @@ const Home = () => {
               ))}
             </tbody>
           </table>
+        )}
+        {!loading && !error && filtered.length > 0 && (
+          <Pagination
+            total={filtered.length}
+            page={page}
+            pageSize={pageSize}
+            onPage={setPage}
+            onSize={(n) => {
+              setPageSize(n);
+              setPage(1);
+            }}
+            testid="absensi-pagination"
+          />
         )}
       </section>
 
@@ -648,6 +745,16 @@ const SiswaPage = () => {
       return true;
     });
   }, [list, search, kelasFilter]);
+
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  useEffect(() => {
+    setPage(1);
+  }, [search, kelasFilter, tab]);
+  const paged = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize]
+  );
 
   const openAdd = () => {
     setEditing(null);
@@ -812,7 +919,7 @@ const SiswaPage = () => {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((s) => (
+              {paged.map((s) => (
                 <tr key={s.ID_Siswa} data-testid={`siswa-row-${s.ID_Siswa}`}>
                   <td>{s.Nama}</td>
                   <td>{s.Kelas}</td>
@@ -849,6 +956,19 @@ const SiswaPage = () => {
               ))}
             </tbody>
           </table>
+        )}
+        {!loading && !error && filtered.length > 0 && (
+          <Pagination
+            total={filtered.length}
+            page={page}
+            pageSize={pageSize}
+            onPage={setPage}
+            onSize={(n) => {
+              setPageSize(n);
+              setPage(1);
+            }}
+            testid="siswa-pagination"
+          />
         )}
       </section>
 
@@ -958,6 +1078,7 @@ const DashboardPage = () => {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const [genderFilter, setGenderFilter] = useState("all");
+  const [kelasFilter, setKelasFilter] = useState("all");
   const today = todayStr();
 
   useEffect(() => {
@@ -966,7 +1087,9 @@ const DashboardPage = () => {
       setLoading(true);
       setError(null);
       try {
-        const res = await axios.get(`${API}/dashboard`);
+        const res = await axios.get(`${API}/dashboard`, {
+          params: kelasFilter !== "all" ? { kelas: kelasFilter } : {},
+        });
         if (active) setData(res.data);
       } catch (e) {
         const d = e?.response?.data?.detail;
@@ -978,7 +1101,7 @@ const DashboardPage = () => {
     return () => {
       active = false;
     };
-  }, [today]);
+  }, [kelasFilter]);
 
   const list = data?.perhatian || [];
   const filtered = useMemo(() => {
@@ -999,6 +1122,25 @@ const DashboardPage = () => {
         <h1 className="title">Dashboard</h1>
         <p className="subtitle date-line">{prettyDate(data?.tanggal || today)}</p>
       </header>
+
+      <div className="filter-bar" data-testid="dashboard-kelas-bar">
+        <div className="field">
+          <span className="label">Kelas</span>
+          <select
+            className="filter-select"
+            value={kelasFilter}
+            onChange={(e) => setKelasFilter(e.target.value)}
+            data-testid="dashboard-filter-kelas"
+          >
+            <option value="all">Semua Kelas</option>
+            {(data?.kelas_list || []).map((kk) => (
+              <option key={kk} value={kk}>
+                {kk}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
 
       {loading && <p className="muted" data-testid="dashboard-loading">Memuat data…</p>}
       {!loading && error && (
@@ -1105,6 +1247,169 @@ const DashboardPage = () => {
   );
 };
 
+const AKSI_OPTIONS = [
+  "Login",
+  "Logout",
+  "Ubah Status Absensi",
+  "Tambah Siswa",
+  "Edit Siswa",
+  "Nonaktifkan Siswa",
+  "Aktifkan Siswa",
+];
+
+const fmtWaktu = (v) => {
+  if (!v) return "—";
+  try {
+    return new Date(v).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" });
+  } catch {
+    return v;
+  }
+};
+
+const SejarahPage = () => {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [aksiFilter, setAksiFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await axios.get(`${API}/logs`);
+        setLogs(res.data.data || []);
+      } catch (e) {
+        const d = e?.response?.data?.detail;
+        setError(d?.message || "Gagal memuat log.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const filtered = useMemo(() => {
+    const rows = [...logs].sort((a, b) =>
+      (b.Timestamp || "").localeCompare(a.Timestamp || "")
+    );
+    return rows.filter((r) => {
+      if (aksiFilter !== "all" && (r.Aksi || "") !== aksiFilter) return false;
+      const ts = (r.Timestamp || "").slice(0, 10);
+      if (dateFrom && ts < dateFrom) return false;
+      if (dateTo && ts > dateTo) return false;
+      return true;
+    });
+  }, [logs, aksiFilter, dateFrom, dateTo]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [aksiFilter, dateFrom, dateTo]);
+
+  const paged = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize]
+  );
+
+  return (
+    <div className="page" data-testid="sejarah-page">
+      <header className="page-header">
+        <h1 className="title">Sejarah Aktivitas</h1>
+        <p className="subtitle">Log aktivitas sistem (terbaru di atas)</p>
+      </header>
+
+      <section className="card">
+        <div className="filter-bar">
+          <div className="field">
+            <span className="label">Aksi</span>
+            <select
+              className="filter-select"
+              value={aksiFilter}
+              onChange={(e) => setAksiFilter(e.target.value)}
+              data-testid="sejarah-filter-aksi"
+            >
+              <option value="all">Semua</option>
+              {AKSI_OPTIONS.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <span className="label">Dari</span>
+            <input
+              type="date"
+              className="filter-select"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              data-testid="sejarah-date-from"
+            />
+          </div>
+          <div className="field">
+            <span className="label">Sampai</span>
+            <input
+              type="date"
+              className="filter-select"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              data-testid="sejarah-date-to"
+            />
+          </div>
+        </div>
+
+        {loading && <p className="muted" data-testid="sejarah-loading">Memuat data…</p>}
+        {!loading && error && (
+          <div className="alert" data-testid="sejarah-error">{error}</div>
+        )}
+        {!loading && !error && filtered.length === 0 && (
+          <p className="muted" data-testid="sejarah-empty">Tidak ada log yang cocok.</p>
+        )}
+        {!loading && !error && filtered.length > 0 && (
+          <>
+            <table className="table" data-testid="sejarah-table">
+              <thead>
+                <tr>
+                  <th>Waktu</th>
+                  <th>User</th>
+                  <th>Aksi</th>
+                  <th>Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paged.map((r, i) => (
+                  <tr key={i} data-testid={`sejarah-row-${i}`}>
+                    <td className="mono">{fmtWaktu(r.Timestamp)}</td>
+                    <td>{r.User}</td>
+                    <td>
+                      <span className="badge badge-ijin">{r.Aksi}</span>
+                    </td>
+                    <td>{r.Detail}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <Pagination
+              total={filtered.length}
+              page={page}
+              pageSize={pageSize}
+              onPage={setPage}
+              onSize={(n) => {
+                setPageSize(n);
+                setPage(1);
+              }}
+              testid="sejarah-pagination"
+            />
+          </>
+        )}
+      </section>
+    </div>
+  );
+};
+
 function App() {
   return (
     <div className="App">
@@ -1135,6 +1440,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <SiswaPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/sejarah"
+              element={
+                <ProtectedRoute>
+                  <SejarahPage />
                 </ProtectedRoute>
               }
             />

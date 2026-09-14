@@ -47,8 +47,17 @@ Status kehadiran harian: Hadir (default), Sakit, Ijin, Pulang.
 - FIX: read+write atomik dalam satu lock → tidak ada duplikat baris untuk key sama meski request bersamaan (diverifikasi 5 write paralel → 1 baris)
 - Testing agent: backend 100%, frontend 100%
 
-## Backlog (belum dikerjakan — sesuai permintaan)
-- P2: Halaman Sejarah Aktivitas (placeholder nav sudah ada)
+## Backlog (belum dikerjakan)
+- P2: UI/UX overhaul (Prompt 10)
+- P2: Refactor App.js → pisah ke pages/components (maintainability)
+
+### Tahap 9 — Sejarah Aktivitas + Pagination + Filter Kelas Dashboard + Konfirmasi Logout (2026-06)
+- Halaman **Sejarah Aktivitas** (`/sejarah`, nav aktif): tabel Log_Aktivitas (Waktu/User/Aksi/Detail) urut terbaru; filter Aksi + rentang tanggal + pagination
+- `GET /api/logs` (protected) baca Log_Aktivitas
+- **Konfirmasi Logout**: popup "Apakah kamu yakin ingin keluar?" (Ya, Keluar / Batal) di sidebar
+- **Pagination** (Absensi, Siswa, Sejarah): dropdown 5/10/50/100 + Prev/Next; tetap kompatibel dengan filter/search
+- **Filter Kelas Dashboard**: `GET /api/dashboard?kelas=` + `kelas_list`; semua statistik & tabel ikut menyesuaikan
+- Testing agent: backend 100% (7/7), frontend 100%
 
 ### Tahap 8 — Dashboard (2026-06)
 - Urutan sidebar: **Dashboard, Absensi, Siswa, Sejarah Aktivitas** (placeholder); Logout tetap di bawah
